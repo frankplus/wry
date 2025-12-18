@@ -35,9 +35,16 @@ pub fn handle_request(url: String) -> Option<Vec<u8>> {
     if let Some(protocols) = PROTOCOL_HANDLERS.get() {
         let protocols = protocols.lock().unwrap();
         // find protocol handler
-        if let Some(scheme_end) = url.find("://") {
-            let scheme = &url[0..scheme_end];
-             if let Some(handler) = protocols.get(scheme) {
+        // Check for OpenHarmony specific domain mapping
+        let scheme = if url.starts_with("https://tauri.localhost") || url.starts_with("http://tauri.localhost") {
+            "tauri"
+        } else if let Some(scheme_end) = url.find("://") {
+            &url[0..scheme_end]
+        } else {
+            return None;
+        };
+
+        if let Some(handler) = protocols.get(scheme) {
                  let req = crate::http::Request::builder()
                     .uri(url)
                     .body(Vec::new())
@@ -56,7 +63,6 @@ pub fn handle_request(url: String) -> Option<Vec<u8>> {
                  
                  return rx.recv().ok();
              }
-        }
     }
     None
 }
