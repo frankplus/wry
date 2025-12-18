@@ -7,8 +7,9 @@ pub struct InnerWebView {
     id: String,
 }
 
-static IPC_HANDLERS: OnceLock<Mutex<HashMap<String, Box<dyn Fn(crate::http::Request<String>) + Send>>>> = OnceLock::new();
+static HANDLERS: OnceLock<Mutex<HashMap<String, Box<dyn Fn(crate::http::Request<String>) + Send>>>> = OnceLock::new();
 static SCRIPT_EXECUTOR: OnceLock<ThreadsafeFunction<String, ErrorStrategy::Fatal>> = OnceLock::new();
+static PROTOCOL_HANDLERS: OnceLock<Mutex<HashMap<String, Box<dyn Fn(crate::WebViewId, crate::http::Request<Vec<u8>>, crate::RequestAsyncResponder) + Send>>>> = OnceLock::new();
 
 pub fn register_script_executor(tsfn: ThreadsafeFunction<String, ErrorStrategy::Fatal>) {
     if SCRIPT_EXECUTOR.set(tsfn).is_err() {
@@ -17,7 +18,7 @@ pub fn register_script_executor(tsfn: ThreadsafeFunction<String, ErrorStrategy::
 }
 
 pub fn on_ipc_message(id: &str, msg: String) {
-    if let Some(handlers) = IPC_HANDLERS.get() {
+    if let Some(handlers) = HANDLERS.get() {
         if let Some(handler) = handlers.lock().unwrap().get(id) {
              let req = crate::http::Request::builder()
                 .uri(format!("ipc://{}", id))
@@ -26,6 +27,38 @@ pub fn on_ipc_message(id: &str, msg: String) {
              handler(req);
         }
     }
+}
+
+pub fn handle_request(url: String) -> Option<Vec<u8>> {
+    // Basic synchronous handling for now, matching the current NAPI structure
+    // We need to parse the scheme from the URL
+    if let Some(protocols) = PROTOCOL_HANDLERS.get() {
+        let protocols = protocols.lock().unwrap();
+        // find protocol handler
+        if let Some(scheme_end) = url.find("://") {
+            let scheme = &url[0..scheme_end];
+             if let Some(handler) = protocols.get(scheme) {
+                 let req = crate::http::Request::builder()
+                    .uri(url)
+                    .body(Vec::new())
+                    .unwrap();
+                 
+                 let (tx, rx) = std::sync::mpsc::channel();
+                 // Construct RequestAsyncResponder using internal field (we are in the same crate)
+                 let responder = crate::RequestAsyncResponder {
+                     responder: Box::new(move |res| {
+                         let _ = tx.send(res.body().to_vec());
+                     }),
+                 };
+                 
+                 // TODO: Use correct WebViewId. For now assuming "0".
+                 handler("0", req, responder);
+                 
+                 return rx.recv().ok();
+             }
+        }
+    }
+    None
 }
 
 impl InnerWebView {
@@ -37,8 +70,13 @@ impl InnerWebView {
       let id = attributes.id.map(|s| s.to_string()).unwrap_or_else(|| "0".to_string());
       
       if let Some(ipc) = attributes.ipc_handler {
-          IPC_HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
+          HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
               .lock().unwrap().insert(id.clone(), ipc);
+      }
+      
+      for (name, handler) in attributes.custom_protocols {
+          PROTOCOL_HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
+              .lock().unwrap().insert(name, handler);
       }
       
       Ok(Self { id })
