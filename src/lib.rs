@@ -367,6 +367,18 @@ pub use android::JniHandle;
 #[cfg(target_os = "android")]
 use android::*;
 
+#[cfg(target_env = "ohos")]
+pub mod openharmony;
+#[cfg(target_env = "ohos")]
+use openharmony::*;
+#[cfg(target_env = "ohos")]
+pub use openharmony::JniHandle; // Dummy handle
+
+#[cfg(target_env = "ohos")]
+#[derive(Default)]
+pub struct PlatformSpecificWebViewAttributes;
+
+
 #[cfg(gtk)]
 pub(crate) mod webkitgtk;
 /// Re-exported [raw-window-handle](https://docs.rs/raw-window-handle/latest/raw_window_handle/) crate.
@@ -468,7 +480,7 @@ pub enum NewWindowResponse {
   #[cfg(not(any(target_os = "android", target_os = "ios")))]
   Create {
     #[cfg(any(
-      target_os = "linux",
+      all(target_os = "linux", not(target_env = "ohos")),
       target_os = "dragonfly",
       target_os = "freebsd",
       target_os = "netbsd",
@@ -491,7 +503,7 @@ pub struct NewWindowOpener {
   ///
   /// This must be set as the related view of the new webview. See [`WebViewBuilderExtUnix::with_related_view`].
   #[cfg(any(
-    target_os = "linux",
+    all(target_os = "linux", not(target_env = "ohos")),
     target_os = "dragonfly",
     target_os = "freebsd",
     target_os = "netbsd",
@@ -641,7 +653,7 @@ pub struct WebViewAttributes<'a> {
 
   /// The IPC handler to receive the message from Javascript on webview
   /// using `window.ipc.postMessage("insert_message_here")` to host Rust code.
-  pub ipc_handler: Option<Box<dyn Fn(Request<String>)>>,
+  pub ipc_handler: Option<Box<dyn Fn(Request<String>) + Send>>,
 
   /// A handler closure to process incoming [`DragDropEvent`] of the webview.
   ///
@@ -1032,7 +1044,7 @@ impl<'a> WebViewBuilder<'a> {
     F: Fn(WebViewId, Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> + 'static,
   {
     #[cfg(any(
-      target_os = "linux",
+      all(target_os = "linux", not(target_env = "ohos")),
       target_os = "dragonfly",
       target_os = "freebsd",
       target_os = "netbsd",
@@ -1097,7 +1109,7 @@ impl<'a> WebViewBuilder<'a> {
     F: Fn(WebViewId, Request<Vec<u8>>, RequestAsyncResponder) + 'static,
   {
     #[cfg(any(
-      target_os = "linux",
+      all(target_os = "linux", not(target_env = "ohos")),
       target_os = "dragonfly",
       target_os = "freebsd",
       target_os = "netbsd",
@@ -1129,7 +1141,7 @@ impl<'a> WebViewBuilder<'a> {
   /// - **Linux / Android**: The request URL is not supported on iframes and the main frame URL is used instead.
   pub fn with_ipc_handler<F>(mut self, handler: F) -> Self
   where
-    F: Fn(Request<String>) + 'static,
+    F: Fn(Request<String>) + Send + 'static,
   {
     self.attrs.ipc_handler = Some(Box::new(handler));
     self
@@ -1851,7 +1863,7 @@ impl WebViewBuilderExtAndroid for WebViewBuilder<'_> {
 }
 
 #[cfg(any(
-  target_os = "linux",
+  all(target_os = "linux", not(target_env = "ohos")),
   target_os = "dragonfly",
   target_os = "freebsd",
   target_os = "netbsd",
@@ -1864,7 +1876,7 @@ pub(crate) struct PlatformSpecificWebViewAttributes {
 }
 
 #[cfg(any(
-  target_os = "linux",
+  all(target_os = "linux", not(target_env = "ohos")),
   target_os = "dragonfly",
   target_os = "freebsd",
   target_os = "netbsd",
@@ -1894,7 +1906,7 @@ pub trait WebViewBuilderExtUnix<'a> {
 }
 
 #[cfg(any(
-  target_os = "linux",
+  all(target_os = "linux", not(target_env = "ohos")),
   target_os = "dragonfly",
   target_os = "freebsd",
   target_os = "netbsd",
