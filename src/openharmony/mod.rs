@@ -10,10 +10,22 @@ pub struct InnerWebView {
 static HANDLERS: OnceLock<Mutex<HashMap<String, Box<dyn Fn(crate::http::Request<String>) + Send>>>> = OnceLock::new();
 static SCRIPT_EXECUTOR: OnceLock<ThreadsafeFunction<String, ErrorStrategy::Fatal>> = OnceLock::new();
 static PROTOCOL_HANDLERS: OnceLock<Mutex<HashMap<String, Box<dyn Fn(crate::WebViewId, crate::http::Request<Vec<u8>>, crate::RequestAsyncResponder) + Send>>>> = OnceLock::new();
+static PENDING_SCRIPTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static INITIALIZATION_SCRIPTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 pub fn register_script_executor(tsfn: ThreadsafeFunction<String, ErrorStrategy::Fatal>) {
     if SCRIPT_EXECUTOR.set(tsfn).is_err() {
         log::warn!("Script executor already registered");
+    } else {
+        // flush pending scripts
+        if let Some(pending) = PENDING_SCRIPTS.get() {
+            let mut scripts = pending.lock().unwrap();
+            if let Some(executor) = SCRIPT_EXECUTOR.get() {
+                 for script in scripts.drain(..) {
+                     executor.call(script, ThreadsafeFunctionCallMode::NonBlocking);
+                 }
+            }
+        }
     }
 }
 
@@ -46,7 +58,7 @@ pub fn handle_request(url: String) -> Option<Vec<u8>> {
 
         if let Some(handler) = protocols.get(scheme) {
                  let req = crate::http::Request::builder()
-                    .uri(url)
+                    .uri(url.clone())
                     .body(Vec::new())
                     .unwrap();
                  
@@ -61,7 +73,29 @@ pub fn handle_request(url: String) -> Option<Vec<u8>> {
                  // TODO: Use correct WebViewId. For now assuming "0".
                  handler("0", req, responder);
                  
-                 return rx.recv().ok();
+                 let mut content = rx.recv().ok()?;
+
+                 // Inject initialization scripts if it's an HTML file
+                 if url.ends_with(".html") || url.ends_with("/") {
+                     if let Some(scripts) = INITIALIZATION_SCRIPTS.get() {
+                         let scripts = scripts.lock().unwrap();
+                         if !scripts.is_empty() {
+                             let mut injection = String::new();
+                             for script in scripts.iter() {
+                                 injection.push_str("<script>");
+                                 injection.push_str(script);
+                                 injection.push_str("</script>");
+                             }
+                             // Simple prepend injection
+                             // TODO: Smarter injection into <head>
+                             let mut new_content = injection.into_bytes();
+                             new_content.extend(content);
+                             content = new_content;
+                         }
+                     }
+                 }
+
+                 return Some(content);
              }
     }
     None
@@ -83,6 +117,13 @@ impl InnerWebView {
       for (name, handler) in attributes.custom_protocols {
           PROTOCOL_HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
               .lock().unwrap().insert(name, handler);
+      }
+
+      if !attributes.initialization_scripts.is_empty() {
+          let mut global_scripts = INITIALIZATION_SCRIPTS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+          for script in attributes.initialization_scripts {
+              global_scripts.push(script.script);
+          }
       }
       
       Ok(Self { id })
@@ -106,7 +147,10 @@ impl InnerWebView {
       if let Some(tsfn) = SCRIPT_EXECUTOR.get() {
           tsfn.call(js.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
       } else {
-          log::warn!("Script executor not registered. Cannot eval JS.");
+          // If executor is not ready, we should probably check if we can queue it or just log warning
+          // For eval(), the expectation is usually immediate or close to it, but queueing is safer
+           let mut pending = PENDING_SCRIPTS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+           pending.push(js.to_string());
       }
       Ok(())
   }
