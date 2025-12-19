@@ -41,7 +41,7 @@ pub fn on_ipc_message(id: &str, msg: String) {
     }
 }
 
-pub fn handle_request(url: String) -> Option<Vec<u8>> {
+pub fn handle_request(id: &str, url: String) -> Option<Vec<u8>> {
     // Basic synchronous handling for now, matching the current NAPI structure
     // We need to parse the scheme from the URL
     if let Some(protocols) = PROTOCOL_HANDLERS.get() {
@@ -70,8 +70,8 @@ pub fn handle_request(url: String) -> Option<Vec<u8>> {
                      }),
                  };
                  
-                 // TODO: Use correct WebViewId. For now assuming "0".
-                 handler("0", req, responder);
+                 // Use passed ID
+                 handler(id, req, responder);
                  
                  let mut content = rx.recv().ok()?;
 
