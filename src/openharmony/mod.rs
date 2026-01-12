@@ -42,6 +42,21 @@ pub fn on_ipc_message(id: &str, msg: String) {
 }
 
 pub fn handle_request(id: &str, url: String) -> Option<Vec<u8>> {
+    // Special handler for fetching initialization scripts
+    if url.ends_with("__tauri_init__") {
+        if let Some(scripts) = INITIALIZATION_SCRIPTS.get() {
+            let scripts = scripts.lock().unwrap();
+            let mut injection = String::new();
+            for script in scripts.iter() {
+                injection.push_str("<script>");
+                injection.push_str(script);
+                injection.push_str("</script>");
+            }
+            return Some(injection.into_bytes());
+        }
+        return Some(Vec::new());
+    }
+
     // Basic synchronous handling for now, matching the current NAPI structure
     // We need to parse the scheme from the URL
     if let Some(protocols) = PROTOCOL_HANDLERS.get() {
@@ -53,9 +68,10 @@ pub fn handle_request(id: &str, url: String) -> Option<Vec<u8>> {
         } else if let Some(scheme_end) = url.find("://") {
             &url[0..scheme_end]
         } else {
-            return None;
+             // Default fallthrough??
+             "tauri"
         };
-
+        
         if let Some(handler) = protocols.get(scheme) {
                  let req = crate::http::Request::builder()
                     .uri(url.clone())
